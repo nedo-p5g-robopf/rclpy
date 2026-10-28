@@ -1,0 +1,63 @@
+name: ROS2 CI and Fortify SAST Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build, test'
+        required: true
+        default: 'main'
+        type: string
+
+jobs:
+  ros-ci-and-sast:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+      - run: echo "Running on branch ${{ inputs.branch }}"
+
+      # 環境準備
+      - name: ROS2 Colcon Build Dependencies Setup
+        shell: bash
+        run: |
+          source /opt/ros/$ROS_DISTRO/setup.bash
+          
+          sudo apt-get update
+          rosdep update
+          rosdep install --from-paths . -y --ignore-src
+
+      # ビルド・テストの実行
+      - name: ROS2 Colcon Build/Test
+        shell: bash
+        run: |
+          source /opt/ros/$ROS_DISTRO/setup.bash
+
+          rm -rf build install log result
+          mkdir result
+      
+          colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON 2>&1 | tee result/ros2_build.log
+          colcon test 2>&1 > result/ros2_test.log
+          colcon test-result --verbose 2>&1 > result/ros2_test_result.log
+
+      # Fortifyによるビルドキャプチャ
+      - name: ROS2 Colcon Build with Fortify Capture
+        shell: bash
+        run: |
+          source /opt/ros/$ROS_DISTRO/setup.bash
+          
+          sourceanalyzer -b ros_core -clean
+          sourceanalyzer -b ros_core -python-version 3 -python-path $PYTHONPATH $(find . -name "*.py")
+          sourceanalyzer -b ros_core -exclude "/opt/**/*" -exclude "/usr/**/*" build/compile_commands.json
+          sourceanalyzer -b ros_core -scan -Xmx12G -D com.fortify.sca.rules.IsLibrary=true -sc classic -f result/fortify.fpr
+
+          FPRUtility -information -listIssuesWithMetadata -project result/fortify.fpr -f result/fortify_result.csv -outputFormat CSV
+
+      # 生成された結果を保存
+      - name: Upload Fortify Results
+        uses: actions/upload-artifact@v7
+        with:
+          name: fortify-results
+          path: result/
