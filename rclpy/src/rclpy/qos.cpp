@@ -100,7 +100,42 @@ create_qos_profile(
 
   // Overwrite defaults with passed values
   qos_profile.history = static_cast<rmw_qos_history_policy_t>(qos_history);
-  qos_profile.depth = qos_depth;
+  // (CWE-195): Validate and warn before assignment to avoid broad exception impact
+  // Immediately clear Python error state to avoid PyBind11 SystemError
+  if (qos_profile.history == RMW_QOS_POLICY_HISTORY_KEEP_LAST) {
+    if (qos_depth <= 0) {
+      const int stack_level = 1;
+      PyErr_WarnFormat(
+        PyExc_RuntimeWarning, stack_level,
+        "[rclpy][QoS] KEEP_LAST expects depth > 0, got %d",
+        qos_depth);
+      if (PyErr_Occurred()) {
+        PyErr_Clear();
+      }
+    }
+  } else if (qos_profile.history == RMW_QOS_POLICY_HISTORY_KEEP_ALL) {
+    if (qos_depth != 0) {
+      const int stack_level = 1;
+      PyErr_WarnFormat(
+        PyExc_RuntimeWarning, stack_level,
+        "[rclpy][QoS] KEEP_ALL expects depth = 0, got %d",
+        qos_depth);
+      if (PyErr_Occurred()) {
+        PyErr_Clear();
+      }
+    }
+  } else {
+    const int stack_level = 1;
+    PyErr_WarnFormat(
+      PyExc_RuntimeWarning, stack_level,
+      "[rclpy][QoS] Unknown QoS history policy value: %d",
+      qos_history);
+    if (PyErr_Occurred()) {
+      PyErr_Clear();
+    }
+  }
+  // (CWE-195): Assign depth after warning to preserve existing behavior
+  qos_profile.depth = static_cast<size_t>(qos_depth);
   qos_profile.reliability = static_cast<rmw_qos_reliability_policy_t>(qos_reliability);
   qos_profile.durability = static_cast<rmw_qos_durability_policy_t>(qos_durability);
 
